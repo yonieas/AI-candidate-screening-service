@@ -2,65 +2,42 @@
 import os
 from services.document_processor import DocumentProcessor
 from services.vector_db_manager import VectorDBManager
-from config import logger
-
-# --- Create dummy documents for ingestion ---
-# In a real scenario, these would be actual PDF files.
-DATA_DIR = "ground_truth_docs"
-os.makedirs(DATA_DIR, exist_ok=True)
-
-docs_to_create = {
-    "job_description.txt": (
-        "Product Engineer (Backend). Key skills: Python, FastAPI, "
-        "cloud tech (AWS/GCP), AI/LLM integration. Requires experience with RESTful APIs, "
-        "databases (PostgreSQL/MongoDB), and async tasks. Strong problem-solving and "
-        "communication skills are essential. Focus on clean, scalable code."
-    ),
-    "cv_scoring_rubric.txt": (
-        "CV Scoring Rubric: Evaluate CV based on: 1. Technical Skills Match (Python, APIs, DBs, Cloud, AI/LLM), "
-        "2. Experience Level (years, project complexity), 3. Relevant Achievements (impact, scale). "
-        "Rate from 0.0 to 1.0. A strong candidate will show direct experience in building and scaling backend systems."
-    ),
-    "case_study_brief.txt": (
-        "Case Study Brief: The project requires building a backend service with FastAPI for "
-        "asynchronous job processing. Key components are API endpoints (/upload, /evaluate, /result), "
-        "a RAG pipeline for evaluation, and robust error handling. The system must ingest documents into a vector DB."
-    ),
-    "project_scoring_rubric.txt": (
-        "Project Scoring Rubric: Evaluate project on: 1. Correctness (meets all requirements like RAG and async), "
-        "2. Code Quality (clean, modular, OOP), 3. Resilience (handles failures, retries). Score from 1.0 to 5.0. "
-        "Bonus for clear documentation and design choices explained."
-    )
-}
-
-for filename, content in docs_to_create.items():
-    with open(os.path.join(DATA_DIR, filename), "w") as f:
-        f.write(content)
-
-logger.info(f"Created dummy documents in {DATA_DIR}")
-# --- End of dummy document creation ---
-
+from config import logger, SOURCE_DOCS_DIR
 
 def ingest_ground_truth():
     """
-    Parses and ingests all ground truth documents into ChromaDB.
+    Finds all PDF files in the source documents directory, extracts their text content,
+    and ingests them into the ChromaDB vector database.
     """
+    if not os.path.exists(SOURCE_DOCS_DIR):
+        logger.error(f"Source documents directory not found: '{SOURCE_DOCS_DIR}'")
+        logger.error("Please create this directory and add your PDF files (e.g., job_description.pdf, case_study_brief.pdf).")
+        return
+
     processor = DocumentProcessor()
     db_manager = VectorDBManager()
     
-    logger.info("Starting ingestion of ground truth documents...")
+    logger.info(f"Starting ingestion of ground truth documents from '{SOURCE_DOCS_DIR}'...")
 
-    for filename in os.listdir(DATA_DIR):
-        file_path = os.path.join(DATA_DIR, filename)
-        if os.path.isfile(file_path):
-            # For this script, we read text files. If they were PDFs, we'd use extract_text_from_pdf
-            with open(file_path, "r") as f:
-                content = f.read()
+    # Find all .pdf files in the data directory
+    for filename in os.listdir(SOURCE_DOCS_DIR):
+        if filename.lower().endswith(".pdf"):
+            file_path = os.path.join(SOURCE_DOCS_DIR, filename)
+            
+            # Use the DocumentProcessor to extract text from the PDF
+            logger.info(f"Processing file: {filename}")
+            content = processor.extract_text_from_pdf(file_path)
 
-            doc_type = filename.replace(".txt", "")
+            if "Error:" in content or not content.strip():
+                logger.warning(f"Skipping ingestion for {filename} due to extraction issues.")
+                continue
+
+            # Use the filename (without extension) as the document type
+            doc_type = filename.lower().replace(".pdf", "")
             doc_id = f"ground_truth_{doc_type}"
             metadata = {"doc_type": doc_type, "source": filename}
 
+            # Ingest the extracted text into the vector DB
             db_manager.ingest_document(
                 document_id=doc_id,
                 text=content,
@@ -70,4 +47,6 @@ def ingest_ground_truth():
     logger.info("Ground truth ingestion complete.")
 
 if __name__ == "__main__":
+    # Before running, make sure you have created the 'source_documents'
+    # directory (or whatever you set in .env) and placed your PDF files inside it.
     ingest_ground_truth()
