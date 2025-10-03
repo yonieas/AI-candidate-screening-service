@@ -2,6 +2,7 @@
 import asyncio
 from config import GENERATIVE_MODEL_NAME, logger
 import google.generativeai as genai
+from google.generativeai.types import GenerationConfig
 
 class LLMProvider:
     """
@@ -15,10 +16,18 @@ class LLMProvider:
         """
         Runs a prompt against the LLM with asynchronous retry logic.
         """
+        config = GenerationConfig(
+            temperature=0.1,  # Lower temperature for more deterministic, JSON-friendly output
+            top_p=0.95,
+            top_k=40
+        )
         for attempt in range(retries):
             try:
                 logger.info(f"LLM call attempt {attempt + 1}...")
-                response = await self.model.generate_content_async(prompt)
+                response = await self.model.generate_content_async(
+                    prompt,
+                    generation_config=config
+                    )
                 return response.text
             except Exception as e:
                 logger.error(f"LLM API call failed on attempt {attempt + 1}: {e}")
