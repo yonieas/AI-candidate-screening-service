@@ -47,12 +47,7 @@ class AIEvaluationService:
         2. "cv_feedback": A brief string (20-30 words) summarizing strengths and weaknesses.
         """
         cv_result_str = await self.llm.generate_text_async(cv_prompt)
-        try:
-            cv_result = json.loads(cv_result_str.strip().replace("```json", "").replace("```", ""))
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse JSON from CV evaluation LLM response: {cv_result_str}")
-            # In a real app, you might retry or return a specific error
-            raise ValueError("LLM returned invalid JSON for CV evaluation.")
+        cv_result = self.llm.safe_json_loads(cv_result_str)
 
         # 2. Project Report Evaluation using RAG
         case_brief_context = self.db.query("case study brief", doc_type="case_study_brief")
@@ -72,11 +67,7 @@ class AIEvaluationService:
         2. "project_feedback": A brief string (20-30 words) on correctness and code quality.
         """
         project_result_str = await self.llm.generate_text_async(project_prompt)
-        try:
-            project_result = json.loads(project_result_str.strip().replace("```json", "").replace("```", ""))
-        except json.JSONDecodeError:
-            logger.error(f"Failed to parse JSON from Project evaluation LLM response: {project_result_str}")
-            raise ValueError("LLM returned invalid JSON for Project evaluation.")
+        project_result = self.llm.safe_json_loads(project_result_str)
 
         # 3. Final Summary
         summary_prompt = f"""

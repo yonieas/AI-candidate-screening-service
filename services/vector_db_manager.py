@@ -1,7 +1,7 @@
 # services/vector_db_manager.py
 import chromadb
 from chromadb.utils import embedding_functions
-from config import DB_PATH, COLLECTION_NAME, EMBEDDING_MODEL_NAME, logger
+from config import DB_PATH, COLLECTION_NAME, EMBEDDING_MODEL_NAME, logger, RAG_NUM_RESULTS
 
 class VectorDBManager:
     """Manages all interactions with the ChromaDB vector database."""
@@ -11,7 +11,6 @@ class VectorDBManager:
         try:
             self.client = chromadb.PersistentClient(path=DB_PATH)
             
-            # Using a sentence-transformer model for creating embeddings locally
             self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
                 model_name=EMBEDDING_MODEL_NAME
             )
@@ -19,7 +18,7 @@ class VectorDBManager:
             self.collection = self.client.get_or_create_collection(
                 name=COLLECTION_NAME,
                 embedding_function=self.embedding_function,
-                metadata={"hnsw:space": "cosine"} # Using cosine distance for similarity
+                metadata={"hnsw:space": "cosine"}
             )
             logger.info("ChromaDB client initialized and collection loaded.")
         except Exception as e:
@@ -29,7 +28,6 @@ class VectorDBManager:
     def ingest_document(self, document_id: str, text: str, metadata: dict):
         """
         Ingests a document's text into the vector database.
-        ChromaDB handles chunking and embedding internally.
         """
         try:
             self.collection.add(
@@ -41,17 +39,9 @@ class VectorDBManager:
         except Exception as e:
             logger.error(f"Failed to ingest document {document_id}: {e}")
 
-    def query(self, query_text: str, n_results: int = 2, doc_type: str = "all") -> str:
+    def query(self, query_text: str, doc_type: str = "all") -> str:
         """
         Queries the vector database to find relevant document chunks.
-        
-        Args:
-            query_text: The text to search for.
-            n_results: The number of results to return.
-            doc_type: Filter by document type (e.g., 'job_description', 'rubric').
-        
-        Returns:
-            A string containing the concatenated context of the retrieved documents.
         """
         try:
             where_clause = {}
@@ -60,7 +50,7 @@ class VectorDBManager:
 
             results = self.collection.query(
                 query_texts=[query_text],
-                n_results=n_results,
+                n_results=RAG_NUM_RESULTS, # Using the configured value
                 where=where_clause
             )
             
@@ -70,3 +60,4 @@ class VectorDBManager:
         except Exception as e:
             logger.error(f"Failed to query ChromaDB for doc_type '{doc_type}': {e}")
             return "Error: Could not retrieve context from the knowledge base."
+
