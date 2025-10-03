@@ -66,6 +66,7 @@ coverage.xml
 # dotenv
 .env
 .env.*
+!.env.example
 
 # Local data
 *.sqlite3
@@ -76,7 +77,7 @@ chroma_db/
 vector_db/
 
 # Ground truth and generated docs
-ground_truth_docs/
+source_documents/
 
 # Uploaded files
 uploads/
