@@ -85,6 +85,7 @@ class AIEvaluationService:
         """
         cv_result_str = await self.llm.generate_text_async(cv_prompt)
         cv_detailed_scores = self.llm.safe_json_loads(cv_result_str)
+        logger.debug(f"Detailed CV Scores: {cv_detailed_scores}")
 
         # --- ADDED CODE: Perform the calculation in Python ---
         cv_weighted_avg_1_5 = self._calculate_weighted_average(cv_detailed_scores, CV_WEIGHTS)
@@ -122,6 +123,7 @@ class AIEvaluationService:
         """
         project_result_str = await self.llm.generate_text_async(project_prompt)
         project_detailed_scores = self.llm.safe_json_loads(project_result_str)
+        logger.debug(f"Detailed Project Scores: {project_detailed_scores}")
 
         # --- ADDED CODE: Perform the calculation in Python ---
         final_project_score = round(self._calculate_weighted_average(project_detailed_scores, PROJECT_WEIGHTS), 2)
