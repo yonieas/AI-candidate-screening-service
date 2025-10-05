@@ -1,6 +1,7 @@
 # services/vector_db_manager.py
 import chromadb
 from chromadb.utils import embedding_functions
+from typing import List
 from config import DB_PATH, COLLECTION_NAME, EMBEDDING_MODEL_NAME, logger, RAG_NUM_RESULTS
 
 class VectorDBManager:
@@ -25,19 +26,36 @@ class VectorDBManager:
             logger.error(f"Failed to initialize ChromaDB: {e}")
             raise
 
-    def ingest_document(self, document_id: str, text: str, metadata: dict):
+    def ingest_document_chunks(self, base_doc_id: str, chunks: List, metadata: dict):
         """
-        Ingests a document's text into the vector database.
+        Ingests a list of document chunks into the vector database.
         """
+        if not chunks:
+            logger.warning(f"No chunks provided for document ID {base_doc_id}. Skipping ingestion.")
+            return
+
         try:
+            # Create unique IDs and separate content/metadata for each chunk
+            chunk_ids = [f"{base_doc_id}_chunk_{i}" for i in range(len(chunks))]
+            chunk_documents = [chunk.page_content for chunk in chunks]
+            
+            # Add common metadata to each chunk's specific metadata
+            chunk_metadatas = []
+            for i, chunk in enumerate(chunks):
+                # Start with the chunk's own metadata (like page number)
+                chunk_meta = chunk.metadata.copy() 
+                # Add the common metadata we passed in (like doc_type)
+                chunk_meta.update(metadata) 
+                chunk_metadatas.append(chunk_meta)
+
             self.collection.add(
-                documents=[text],
-                metadatas=[metadata],
-                ids=[document_id]
+                documents=chunk_documents,
+                metadatas=chunk_metadatas,
+                ids=chunk_ids
             )
-            logger.info(f"Successfully ingested document with ID: {document_id}")
+            logger.info(f"Successfully ingested {len(chunks)} chunks for document ID: {base_doc_id}")
         except Exception as e:
-            logger.error(f"Failed to ingest document {document_id}: {e}")
+            logger.error(f"Failed to ingest chunks for document {base_doc_id}: {e}")
 
     def query(self, query_text: str, doc_type: str = "all") -> str:
         """
