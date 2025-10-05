@@ -7,6 +7,16 @@ import google.generativeai as genai
 # Load environment variables from .env file
 load_dotenv()
 
+# --- Logging Configuration (Setup early to catch logs from other initializations) ---
+LOG_LEVEL_STR = os.getenv("LOG_LEVEL", "INFO").upper()
+# Safely get the logging level from the string (e.g., "INFO" -> logging.INFO)
+LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, logging.INFO)
+
+logging.basicConfig(level=LOG_LEVEL, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+logger.info(f"Logger configured with level: {LOG_LEVEL_STR}")
+
 # --- File Path Configurations ---
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
 DB_PATH = os.getenv("DB_PATH", "chroma_db")
@@ -32,9 +42,7 @@ if not GEMINI_API_KEY:
 
 genai.configure(api_key=GEMINI_API_KEY)
 
-# --- Logging Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # --- Ensure Core Directories Exist ---
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
