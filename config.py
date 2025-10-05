@@ -24,7 +24,7 @@ SOURCE_DOCS_DIR = os.getenv("SOURCE_DOCS_DIR", "source_documents")
 
 # --- DB & Model Name Configurations ---
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "job_screening_docs")
-GENERATIVE_MODEL_NAME = os.getenv("GENERATIVE_MODEL_NAME", "gemini-pro")
+GENERATIVE_MODEL_NAME = os.getenv("GENERATIVE_MODEL_NAME", "gemini-2.5-flash")
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
 # --- Algorithmic Tuning Parameters (loaded from .env) ---
