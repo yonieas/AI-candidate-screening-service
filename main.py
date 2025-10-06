@@ -2,7 +2,7 @@
 import os
 import uuid
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from config import UPLOAD_DIR, logger
 from models import UploadResponse, EvaluateRequest, JobStatus, JobResult, EvaluationResult
@@ -12,6 +12,7 @@ from services.llm_provider import LLMProvider
 from services.vector_db_manager import VectorDBManager
 from services.document_processor import DocumentProcessor
 from services.evaluation_service import AIEvaluationService
+from services.database_service import DatabaseService
 
 # --- FastAPI Application Setup ---
 app = FastAPI(
@@ -25,10 +26,12 @@ try:
     db_manager = VectorDBManager()
     doc_processor = DocumentProcessor()
     ai_evaluator = AIEvaluationService(llm_provider, db_manager, doc_processor)
+    db_service = DatabaseService()
 except Exception as e:
     logger.critical(f"Fatal error during service initialization: {e}")
     # In a real app, you might not want to start the server if core services fail
     ai_evaluator = None 
+    db_service = None
 
 
 # --- In-Memory Storage (for simplicity; use Redis/Celery in production) ---
@@ -37,20 +40,13 @@ uploaded_files: Dict[str, str] = {}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def _rebuild_file_map_on_startup():
-    """
-    Scans the UPLOAD_DIR and rebuilds the in-memory 'uploaded_files'
-    dictionary to persist across server restarts.
-    """
-    if not os.path.exists(UPLOAD_DIR):
-        return
-    
+    """Scans UPLOAD_DIR and rebuilds the 'uploaded_files' dictionary."""
+    if not os.path.exists(UPLOAD_DIR): return
     logger.info("Rebuilding file map from disk...")
     count = 0
     for filename in os.listdir(UPLOAD_DIR):
-        # Filenames are in the format: {uuid}_{original_filename}.pdf
         try:
             file_id = filename.split('_')[0]
-            # Validate that it's a UUID to avoid other stray files
             uuid.UUID(file_id) 
             file_path = os.path.join(UPLOAD_DIR, filename)
             uploaded_files[file_id] = file_path
@@ -61,14 +57,29 @@ def _rebuild_file_map_on_startup():
 
 @app.on_event("startup")
 async def startup_event():
+    """On startup, connect to DB, initialize tables, and load data."""
+    if db_service:
+        db_service.connect()
+        db_service.init_db()
+        # Load persisted jobs into the in-memory dictionary
+        global jobs
+        jobs = db_service.load_all_jobs_to_memory()
     _rebuild_file_map_on_startup()
+
+@app.on_event("shutdown")
+def shutdown_event():
+    """On shutdown, close the database connection."""
+    if db_service:
+        db_service.close()
 
 # --- Background Task for Evaluation ---
 async def run_evaluation_task(job_id: str, cv_id: str, report_id: str, job_title: str):
-    """The actual async task that runs the AI evaluation."""
-    if not ai_evaluator:
+    """The actual async task that runs the AI evaluation and saves the result."""
+    if not ai_evaluator or not db_service:
+        error_msg = "A core service is not available."
         jobs[job_id]["status"] = "failed"
-        jobs[job_id]["result"] = {"error": "AI Evaluation Service not available."}
+        jobs[job_id]["result"] = {"error": error_msg}
+        db_service.save_job(jobs[job_id])
         return
 
     try:
@@ -86,7 +97,8 @@ async def run_evaluation_task(job_id: str, cv_id: str, report_id: str, job_title
         logger.error(f"Evaluation for job {job_id} failed: {e}")
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["result"] = {"error": str(e)}
-
+    finally:
+        db_service.save_job(jobs[job_id])
 
 # --- API Endpoints ---
 @app.post("/upload", response_model=UploadResponse, status_code=201)
@@ -135,6 +147,17 @@ def evaluate(request: EvaluateRequest, background_tasks: BackgroundTasks):
 
     logger.info(f"Job {job_id} queued for evaluation.")
     return jobs[job_id]
+
+@app.get("/results", response_model=List[JobResult])
+def get_all_results():
+    """
+    Retrieves all completed evaluation results from the database.
+    """
+    if not db_service:
+        raise HTTPException(status_code=503, detail="Database service is unavailable.")
+    
+    completed_jobs = db_service.get_all_completed_jobs()
+    return completed_jobs
 
 @app.get("/result/{job_id}", response_model=JobResult)
 def get_result(job_id: str):
