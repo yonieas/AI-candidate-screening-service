@@ -5,7 +5,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from typing import Dict, Any
 
 from config import UPLOAD_DIR, logger
-from models import UploadResponse, EvaluateRequest, JobStatus, JobResult
+from models import UploadResponse, EvaluateRequest, JobStatus, JobResult, EvaluationResult
 
 # --- Import Core AI Services ---
 from services.llm_provider import LLMProvider
@@ -36,6 +36,32 @@ jobs: Dict[str, Dict[str, Any]] = {}
 uploaded_files: Dict[str, str] = {}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+def _rebuild_file_map_on_startup():
+    """
+    Scans the UPLOAD_DIR and rebuilds the in-memory 'uploaded_files'
+    dictionary to persist across server restarts.
+    """
+    if not os.path.exists(UPLOAD_DIR):
+        return
+    
+    logger.info("Rebuilding file map from disk...")
+    count = 0
+    for filename in os.listdir(UPLOAD_DIR):
+        # Filenames are in the format: {uuid}_{original_filename}.pdf
+        try:
+            file_id = filename.split('_')[0]
+            # Validate that it's a UUID to avoid other stray files
+            uuid.UUID(file_id) 
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            uploaded_files[file_id] = file_path
+            count += 1
+        except (IndexError, ValueError):
+            logger.warning(f"Skipping file with unexpected format: {filename}")
+    logger.info(f"Rebuilt file map with {count} items.")
+
+@app.on_event("startup")
+async def startup_event():
+    _rebuild_file_map_on_startup()
 
 # --- Background Task for Evaluation ---
 async def run_evaluation_task(job_id: str, cv_id: str, report_id: str, job_title: str):
@@ -118,6 +144,14 @@ def get_result(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job ID not found.")
+
+    # When using Pydantic V2, model validation happens on return.
+    # We need to handle the case where a failed job's result is an error dict.
+    if job.get("status") == "failed":
+        # The response model allows result to be None, but not a dict with 'error'.
+        # We create a valid JobResult structure for failed tasks.
+        return JobResult(id=job["id"], status="failed", result=None)
+
     return job
 
 @app.get("/", include_in_schema=False)
