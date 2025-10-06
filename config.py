@@ -27,6 +27,10 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME", "job_screening_docs")
 GENERATIVE_MODEL_NAME = os.getenv("GENERATIVE_MODEL_NAME", "gemini-2.5-flash")
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
 
+DATABASE_FILE = os.getenv("DATABASE_FILE", "jobs.db")
+if not DATABASE_FILE:
+    raise ValueError("DATABASE_FILE environment variable not set!")
+
 # --- Algorithmic Tuning Parameters (loaded from .env) ---
 # We use `float` and `int` to cast the string values from the .env file
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", 0.1))

@@ -2,10 +2,7 @@
 import sqlite3
 import json
 from typing import Dict, Any, List, Optional
-from config import logger
-
-DATABASE_FILE = "jobs.db"
-
+from config import logger, DATABASE_FILE
 class DatabaseService:
     """Handles all database operations for storing and retrieving job results."""
 
