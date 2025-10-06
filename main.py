@@ -196,6 +196,27 @@ def get_result(job_id: str):
 
     return job
 
+@app.delete("/result/{job_id}", response_model=JobStatus, status_code=status.HTTP_200_OK)
+def delete_job(job_id: str):
+    """
+    Deletes a specific job by its ID from both the in-memory cache
+    and the persistent database.
+    """
+    # Attempt to remove from in-memory dictionary
+    job_in_memory = jobs.pop(job_id, None)
+    
+    # Attempt to remove from the database
+    job_in_db = False
+    if db_service:
+        job_in_db = db_service.delete_job(job_id)
+
+    # If the job was not found in either location, return 404
+    if not job_in_memory and not job_in_db:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job ID not found.")
+        
+    jobs[job_id] = {"id": job_id, "status": "deleted"}
+    return jobs[job_id]
+
 @app.get("/", include_in_schema=False)
 def root():
     return {"message": "AI Candidate Screening Service is running."}

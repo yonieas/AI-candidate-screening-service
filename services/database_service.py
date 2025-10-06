@@ -110,3 +110,27 @@ class DatabaseService:
         except sqlite3.Error as e:
             logger.error(f"Error fetching completed jobs: {e}")
             return []
+        
+    def delete_job(self, job_id: str) -> bool:
+        """
+        Deletes a job from the database by its ID.
+        Returns True if a row was deleted, False otherwise.
+        """
+        if not self.conn:
+            self.connect()
+        
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("DELETE FROM jobs WHERE id = ?;", (job_id,))
+            self.conn.commit()
+            
+            # cursor.rowcount will be 1 if a row was deleted, 0 otherwise
+            if cursor.rowcount > 0:
+                logger.info(f"Successfully deleted job {job_id} from the database.")
+                return True
+            else:
+                logger.warning(f"Attempted to delete job {job_id}, but it was not found in the database.")
+                return False
+        except sqlite3.Error as e:
+            logger.error(f"Error deleting job {job_id}: {e}")
+            return False
