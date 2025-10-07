@@ -22,18 +22,26 @@ pip install --upgrade pip
 echo "Installing Python dependencies..."
 pip install -r requirements.txt
 
-# Create .env template if not exists
+# Copy .env from .env.example if not exists
 if [ ! -f ".env" ]; then
-	echo "Creating .env template..."
-	echo 'GEMINI_API_KEY="YOUR_API_KEY"' > .env
-	echo "Please update .env with your actual Gemini API key."
+	if [ -f ".env.example" ]; then
+		echo "Copying .env.example to .env..."
+		cp .env.example .env
+		echo "Please update .env with your actual API keys and settings."
+	else
+		echo ".env.example not found. Please create your .env manually."
+	fi
 fi
 
-echo "Setup complete. To activate the virtual environment, run:"
+echo ""
+echo "Setup complete!"
+echo "---------------------------------------------"
+echo "To activate the virtual environment, run:"
 echo "  source venv/bin/activate"
 echo
-echo "Before starting the server, run the ingest script to process ground truth documents and create the local database:"
+echo "Before starting the server, run the ingest script to process source documents and create the local database:"
 echo "  python ingest.py"
 echo
 echo "To start the server:"
 echo "  uvicorn main:app --reload"
+echo "---------------------------------------------"

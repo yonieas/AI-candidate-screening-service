@@ -13,19 +13,22 @@ This project is an AI-powered candidate screening service designed to automate a
 ```
 ├── config.py                # Configuration settings
 ├── ingest.py                # Document ingestion script
-├── main.py                  # Main entry point
+├── main.py                  # Main FastAPI entry point
 ├── models.py                # Data models and schemas
 ├── requirements.txt         # Python dependencies
 ├── setup.sh                 # Setup script
-├── chroma_db/               # Vector database files
+├── chroma_db/               # Vector database files (ChromaDB)
 ├── docs/                    # Project documentation
-├── ground_truth_docs/       # Job descriptions and scoring rubrics
+├── source_documents/        # Job descriptions, scoring rubrics, and case study briefs (PDFs)
 ├── services/                # Core service modules
 │   ├── document_processor.py
 │   ├── evaluation_service.py
 │   ├── llm_provider.py
 │   └── vector_db_manager.py
 ├── uploads/                 # Uploaded candidate documents
+├── check_db.py              # Utility to check DB contents
+├── .env                     # Environment variables (API keys, DB paths, etc.)
+├── venv/                    # Python virtual environment (optional, not tracked)
 ```
 
 ## Setup Instructions
@@ -47,20 +50,45 @@ This project is an AI-powered candidate screening service designed to automate a
    uvicorn main:app --reload
    ```
 
+
 ## Usage
-- Place candidate resumes and project files in the `uploads/` directory.
-- Place job descriptions and rubrics in `ground_truth_docs/`.
+
+- Place job descriptions, scoring rubrics, and case study briefs in the `source_documents/` directory as PDFs.
 - Use the main script or service endpoints to trigger evaluation.
 
+### Ingestion and Data Refresh
+- If you update or add files in `source_documents/` (e.g., a new or updated `Scoring_Rubric.pdf`), you **must re-run the ingestion script** to update the vector database:
+   ```zsh
+   python ingest.py
+   ```
+   This ensures the latest documents are available for retrieval-augmented generation (RAG) and evaluation.
+
+### Environment Variables
+- Copy `.env.example` to `.env` and fill in required values (API keys, DB paths, etc.).
+- Key variables:
+   - `GEMINI_API_KEY`: Your LLM API key
+   - `DB_PATH`: Path to ChromaDB directory (default: `chroma_db`)
+   - `COLLECTION_NAME`: Name of the ChromaDB collection (default: `job_screening_docs`)
+   - `UPLOAD_DIR`: Where candidate files are uploaded (default: `uploads`)
+   - `SOURCE_DOCS_DIR`: Where source/reference PDFs are stored (default: `source_documents`)
+   - `EMBEDDING_MODEL_NAME`, `GENERATIVE_MODEL_NAME`: Model names for embeddings and LLM
+
+
 ## Folder Descriptions
-- `services/`: Contains the main logic for document processing, evaluation, LLM integration, and vector DB management.
-- `ground_truth_docs/`: Contains reference documents for evaluation (job descriptions, rubrics).
-- `uploads/`: Stores candidate submissions.
-- `chroma_db/`: Vector database files for semantic search.
-- `docs/`: Additional documentation.
+- `services/`: Main logic for document processing, evaluation, LLM integration, and vector DB management
+- `source_documents/`: Reference documents for evaluation (job descriptions, scoring rubrics, case study briefs)
+- `uploads/`: Stores candidate submissions (resumes, project reports)
+- `chroma_db/`: Vector database files for semantic search (ChromaDB)
+- `docs/`: Additional documentation
+- `.env`: Environment variables for configuration
+- `check_db.py`: Utility to inspect DB contents
+
+## Important
+- **File Naming:** In `source_documents/`, make sure your single rubric PDF is named `Scoring_Rubric.pdf` (case-sensitive). The ingestion script uses the filename to create the `doc_type`.
+- **Re-Ingest Data:** After placing or updating files, always re-run `python ingest.py` to refresh the vector DB.
 
 ## Requirements
-- Python 3.10+
+- Python 3.12+
 - See `requirements.txt` for Python package dependencies.
 
 ## License

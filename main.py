@@ -1,48 +1,98 @@
 # main.py
 import os
 import uuid
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
-from typing import Dict, Any
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, status
+from typing import Dict, Any, List
+from contextlib import asynccontextmanager
 
 from config import UPLOAD_DIR, logger
-from models import UploadResponse, EvaluateRequest, JobStatus, JobResult
+from models import UploadResponse, EvaluateRequest, JobStatus, JobResult, EvaluationResult
 
 # --- Import Core AI Services ---
 from services.llm_provider import LLMProvider
 from services.vector_db_manager import VectorDBManager
 from services.document_processor import DocumentProcessor
 from services.evaluation_service import AIEvaluationService
+from services.database_service import DatabaseService
+
+# --- In-Memory Storage & Service Initialization ---
+# These are global so they can be accessed by the lifespan manager and endpoints
+jobs: Dict[str, Dict[str, Any]] = {}
+uploaded_files: Dict[str, str] = {}
+db_service: DatabaseService = None
+ai_evaluator: AIEvaluationService = None
+
+# --- Lifespan Event Handler (Replaces deprecated on_event) ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Manages application startup and shutdown events.
+    """
+    # --- Startup Logic ---
+    logger.info("Application startup...")
+    
+    global db_service, ai_evaluator, jobs
+    try:
+        # Initialize services
+        llm_provider = LLMProvider()
+        db_manager = VectorDBManager()
+        doc_processor = DocumentProcessor()
+        ai_evaluator = AIEvaluationService(llm_provider, db_manager, doc_processor)
+        db_service = DatabaseService()
+
+        # Connect to DB and load persisted data
+        db_service.connect()
+        db_service.init_db()
+        jobs = db_service.load_all_jobs_to_memory()
+        
+        # Rebuild file map from disk
+        _rebuild_file_map_on_startup()
+
+    except Exception as e:
+        logger.critical(f"Fatal error during service initialization: {e}")
+        # Setting services to None to indicate failure
+        ai_evaluator = None 
+        db_service = None
+
+    yield  # --- Application is now running ---
+
+    # --- Shutdown Logic ---
+    logger.info("Application shutdown...")
+    if db_service:
+        db_service.close()
 
 # --- FastAPI Application Setup ---
 app = FastAPI(
     title="AI Candidate Screening Service",
-    description="An API to automate the initial screening of job applications using GenAI."
+    description="An API to automate the initial screening of job applications using GenAI.",
+    lifespan=lifespan  # Use the new lifespan manager
 )
 
-# --- Initialize Services (Dependency Injection) ---
-try:
-    llm_provider = LLMProvider()
-    db_manager = VectorDBManager()
-    doc_processor = DocumentProcessor()
-    ai_evaluator = AIEvaluationService(llm_provider, db_manager, doc_processor)
-except Exception as e:
-    logger.critical(f"Fatal error during service initialization: {e}")
-    # In a real app, you might not want to start the server if core services fail
-    ai_evaluator = None 
-
-
-# --- In-Memory Storage (for simplicity; use Redis/Celery in production) ---
-jobs: Dict[str, Dict[str, Any]] = {}
-uploaded_files: Dict[str, str] = {}
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
+# --- Helper Function for Startup ---
+def _rebuild_file_map_on_startup():
+    """Scans UPLOAD_DIR and rebuilds the 'uploaded_files' dictionary."""
+    if not os.path.exists(UPLOAD_DIR): return
+    logger.info("Rebuilding file map from disk...")
+    count = 0
+    for filename in os.listdir(UPLOAD_DIR):
+        try:
+            file_id = filename.split('_')[0]
+            uuid.UUID(file_id) 
+            file_path = os.path.join(UPLOAD_DIR, filename)
+            uploaded_files[file_id] = file_path
+            count += 1
+        except (IndexError, ValueError):
+            logger.warning(f"Skipping file with unexpected format: {filename}")
+    logger.info(f"Rebuilt file map with {count} items.")
 
 # --- Background Task for Evaluation ---
 async def run_evaluation_task(job_id: str, cv_id: str, report_id: str, job_title: str):
-    """The actual async task that runs the AI evaluation."""
-    if not ai_evaluator:
+    """The actual async task that runs the AI evaluation and saves the result."""
+    if not ai_evaluator or not db_service:
+        error_msg = "A core service is not available."
         jobs[job_id]["status"] = "failed"
-        jobs[job_id]["result"] = {"error": "AI Evaluation Service not available."}
+        jobs[job_id]["result"] = {"error": error_msg}
+        db_service.save_job(jobs[job_id])
         return
 
     try:
@@ -60,10 +110,11 @@ async def run_evaluation_task(job_id: str, cv_id: str, report_id: str, job_title
         logger.error(f"Evaluation for job {job_id} failed: {e}")
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["result"] = {"error": str(e)}
-
+    finally:
+        db_service.save_job(jobs[job_id])
 
 # --- API Endpoints ---
-@app.post("/upload", response_model=UploadResponse, status_code=201)
+@app.post("/upload", response_model=UploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_files(cv: UploadFile = File(...), project_report: UploadFile = File(...)):
     """
     Accepts a candidate's CV and Project Report files.
@@ -87,10 +138,10 @@ async def upload_files(cv: UploadFile = File(...), project_report: UploadFile = 
         logger.error(f"File upload failed: {e}")
         raise HTTPException(status_code=500, detail="An error occurred during file upload.")
 
-@app.post("/evaluate", response_model=JobStatus, status_code=202)
+@app.post("/evaluate", response_model=JobStatus, status_code=status.HTTP_202_ACCEPTED)
 def evaluate(request: EvaluateRequest, background_tasks: BackgroundTasks):
     """
-    Triggers the asynchronous AI evaluation pipeline.
+    Triggers the asynchronous AI evaluation pipeline using BackgroundTasks.
     Immediately returns a job ID to track the process.
     """
     if request.cv_id not in uploaded_files or request.report_id not in uploaded_files:
@@ -110,6 +161,23 @@ def evaluate(request: EvaluateRequest, background_tasks: BackgroundTasks):
     logger.info(f"Job {job_id} queued for evaluation.")
     return jobs[job_id]
 
+@app.get("/results", response_model=List[JobResult])
+def get_all_results():
+    """
+    Retrieves all evaluation jobs from the in-memory store.
+    This includes queued, processing, completed, and failed jobs.
+    """
+    all_jobs = list(jobs.values())
+    
+    validated_jobs = []
+    for job in all_jobs:
+        if job.get("status") == "failed":
+            validated_jobs.append(JobResult(id=job["id"], status="failed", result=None))
+        else:
+            validated_jobs.append(job)
+
+    return validated_jobs
+
 @app.get("/result/{job_id}", response_model=JobResult)
 def get_result(job_id: str):
     """
@@ -118,7 +186,36 @@ def get_result(job_id: str):
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job ID not found.")
+
+    # When using Pydantic V2, model validation happens on return.
+    # We need to handle the case where a failed job's result is an error dict.
+    if job.get("status") == "failed":
+        # The response model allows result to be None, but not a dict with 'error'.
+        # We create a valid JobResult structure for failed tasks.
+        return JobResult(id=job["id"], status="failed", result=None)
+
     return job
+
+@app.delete("/result/{job_id}", response_model=JobStatus, status_code=status.HTTP_200_OK)
+def delete_job(job_id: str):
+    """
+    Deletes a specific job by its ID from both the in-memory cache
+    and the persistent database.
+    """
+    # Attempt to remove from in-memory dictionary
+    job_in_memory = jobs.pop(job_id, None)
+    
+    # Attempt to remove from the database
+    job_in_db = False
+    if db_service:
+        job_in_db = db_service.delete_job(job_id)
+
+    # If the job was not found in either location, return 404
+    if not job_in_memory and not job_in_db:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job ID not found.")
+        
+    jobs[job_id] = {"id": job_id, "status": "deleted"}
+    return jobs[job_id]
 
 @app.get("/", include_in_schema=False)
 def root():

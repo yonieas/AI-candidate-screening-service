@@ -2,72 +2,109 @@
 import os
 from services.document_processor import DocumentProcessor
 from services.vector_db_manager import VectorDBManager
-from config import logger
+from config import logger, SOURCE_DOCS_DIR
 
-# --- Create dummy documents for ingestion ---
-# In a real scenario, these would be actual PDF files.
-DATA_DIR = "ground_truth_docs"
-os.makedirs(DATA_DIR, exist_ok=True)
-
-docs_to_create = {
-    "job_description.txt": (
-        "Product Engineer (Backend). Key skills: Python, FastAPI, "
-        "cloud tech (AWS/GCP), AI/LLM integration. Requires experience with RESTful APIs, "
-        "databases (PostgreSQL/MongoDB), and async tasks. Strong problem-solving and "
-        "communication skills are essential. Focus on clean, scalable code."
-    ),
-    "cv_scoring_rubric.txt": (
-        "CV Scoring Rubric: Evaluate CV based on: 1. Technical Skills Match (Python, APIs, DBs, Cloud, AI/LLM), "
-        "2. Experience Level (years, project complexity), 3. Relevant Achievements (impact, scale). "
-        "Rate from 0.0 to 1.0. A strong candidate will show direct experience in building and scaling backend systems."
-    ),
-    "case_study_brief.txt": (
-        "Case Study Brief: The project requires building a backend service with FastAPI for "
-        "asynchronous job processing. Key components are API endpoints (/upload, /evaluate, /result), "
-        "a RAG pipeline for evaluation, and robust error handling. The system must ingest documents into a vector DB."
-    ),
-    "project_scoring_rubric.txt": (
-        "Project Scoring Rubric: Evaluate project on: 1. Correctness (meets all requirements like RAG and async), "
-        "2. Code Quality (clean, modular, OOP), 3. Resilience (handles failures, retries). Score from 1.0 to 5.0. "
-        "Bonus for clear documentation and design choices explained."
-    )
+# --- ADD THIS SET of required document types ---
+# These are the doc_types the system needs to function correctly.
+REQUIRED_DOC_TYPES = {
+    "job_description",
+    "scoring_rubric",
+    "case_study_brief"
 }
 
-for filename, content in docs_to_create.items():
-    with open(os.path.join(DATA_DIR, filename), "w") as f:
-        f.write(content)
+# Maps keywords found in filenames to the official doc_type the system uses.
+DOC_TYPE_MAP = {
+    "job_description": "job_description",
+    "job description": "job_description",
+    "jd": "job_description",
+    "scoring_rubric": "scoring_rubric",
+    "rubric": "scoring_rubric",
+    "scoring": "scoring_rubric",
+    "case_study_brief": "case_study_brief",
+    "case_study": "case_study_brief",
+    "brief": "case_study_brief",
+}
 
-logger.info(f"Created dummy documents in {DATA_DIR}")
-# --- End of dummy document creation ---
-
+def get_doc_type_from_filename(filename: str) -> str | None:
+    """Finds the correct doc_type by checking for keywords in the filename."""
+    fn_lower = filename.lower()
+    for keyword, doc_type in DOC_TYPE_MAP.items():
+        if keyword in fn_lower:
+            return doc_type
+    return None
 
 def ingest_ground_truth():
     """
-    Parses and ingests all ground truth documents into ChromaDB.
+    Finds all PDF files, validates their type, chunks them, and ingests them.
+    Raises an error if any of the required document types are missing.
     """
+    if not os.path.exists(SOURCE_DOCS_DIR):
+        # --- MODIFIED: Raise an error if the directory itself is missing ---
+        error_msg = f"Source documents directory not found: '{SOURCE_DOCS_DIR}'. Please create it and add your PDFs."
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+
     processor = DocumentProcessor()
     db_manager = VectorDBManager()
     
-    logger.info("Starting ingestion of ground truth documents...")
-
-    for filename in os.listdir(DATA_DIR):
-        file_path = os.path.join(DATA_DIR, filename)
-        if os.path.isfile(file_path):
-            # For this script, we read text files. If they were PDFs, we'd use extract_text_from_pdf
-            with open(file_path, "r") as f:
-                content = f.read()
-
-            doc_type = filename.replace(".txt", "")
-            doc_id = f"ground_truth_{doc_type}"
-            metadata = {"doc_type": doc_type, "source": filename}
-
-            db_manager.ingest_document(
-                document_id=doc_id,
-                text=content,
-                metadata=metadata
-            )
+    logger.info(f"Starting ingestion of ground truth documents from '{SOURCE_DOCS_DIR}'...")
     
-    logger.info("Ground truth ingestion complete.")
+    # --- ADDED: A set to track which document types we find ---
+    found_doc_types = set()
+
+    all_files = os.listdir(SOURCE_DOCS_DIR)
+    pdf_files = [f for f in all_files if f.lower().endswith(".pdf")]
+
+    if not pdf_files:
+        error_msg = f"No PDF files found in the '{SOURCE_DOCS_DIR}' directory."
+        logger.error(error_msg)
+        raise FileNotFoundError(error_msg)
+
+    for filename in pdf_files:
+        doc_type = get_doc_type_from_filename(filename)
+
+        if not doc_type:
+            # --- MODIFIED: Provide a more helpful warning message ---
+            logger.warning(
+                f"Could not determine document type for '{filename}'. Skipping file. "
+                f"Please ensure the filename contains a keyword like 'job_description', 'rubric', or 'case_study'."
+            )
+            continue
+        
+        logger.info(f"Processing file: {filename} as doc_type: '{doc_type}'")
+        found_doc_types.add(doc_type) # Track the found type
+        
+        file_path = os.path.join(SOURCE_DOCS_DIR, filename)
+        chunks = processor.load_and_chunk_pdf(file_path)
+
+        if not chunks:
+            logger.warning(f"Skipping ingestion for {filename} due to chunking issues.")
+            continue
+
+        doc_id_base = f"ground_truth_{doc_type}"
+        metadata = {"doc_type": doc_type, "source": filename}
+
+        db_manager.ingest_document_chunks(
+            base_doc_id=doc_id_base,
+            chunks=chunks,
+            metadata=metadata
+        )
+    
+    # --- ADDED VALIDATION BLOCK: Check if all required documents were found ---
+    missing_docs = REQUIRED_DOC_TYPES - found_doc_types
+    if missing_docs:
+        error_msg = (
+            f"Ingestion failed. Required document types are missing: {list(missing_docs)}. "
+            f"Please add a PDF file for each missing type to the '{SOURCE_DOCS_DIR}' directory."
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.info("Ingestion complete. All required document types were found and processed.")
 
 if __name__ == "__main__":
-    ingest_ground_truth()
+    try:
+        ingest_ground_truth()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"\nFATAL ERROR: {e}")
+
