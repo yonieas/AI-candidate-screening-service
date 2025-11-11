@@ -16,11 +16,11 @@ source venv/bin/activate
 
 # Upgrade pip
 echo "Upgrading pip..."
-pip install --upgrade pip
+./venv/bin/pip install --upgrade pip
 
 # Install Python dependencies
 echo "Installing Python dependencies..."
-pip install -r requirements.txt
+./venv/bin/pip install -r requirements.txt
 
 # Copy .env from .env.example if not exists
 if [ ! -f ".env" ]; then
